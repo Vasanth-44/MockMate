@@ -13,10 +13,10 @@ export interface EvaluationRequest {
   answer: string;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export async function evaluateAnswer(question: string, answer: string): Promise<EvaluationResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/evaluate`, {
+  const response = await fetch(`${API_URL}/api/evaluate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

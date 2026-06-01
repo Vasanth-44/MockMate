@@ -12,13 +12,33 @@
 
 **MockMate** is a state-of-the-art AI-powered interview simulator that helps developers practice coding, system design, and behavioral questions with real-time feedback. Designed with a premium glassmorphic UI, fluid framer-motion micro-animations, and a Python FastAPI analysis engine powered by Gemini.
 
+---
+
 ## 🌟 Core Features
 
+- **⚡ Resume-Tailored Assessment (NEW):** Drag & drop your PDF resume. MockMate automatically extracts content, parses your technical profile, detects seniority, and designs a customized curriculum of 8 targeted questions (5 technical, 3 behavioral).
 - **⚡ Real-Time Cognitive Analytics:** Instant feedback on technical precision, communication flow, confidence metrics, and structural correctness.
-- **📄 Resume-Tailored Assessment:** Scan and parse your PDF resume, dynamically seeding deep-dive project-based questions.
 - **🎯 Professional Rubrics:** Specialized training for Frontend, Backend, Machine Learning, HR Leadership, and Product Manager interview tracks.
 - **📊 Performance Analytics:** Historical charts visualizing your score patterns, technical depth, and confidence levels over multiple runs.
 - **⚡ Zero-Fail Fallback Engine:** Smart local heuristics return premium structural evaluations even during upstream AI provider service disruptions.
+
+---
+
+## 📸 Interface Screenshots & Previews
+
+### 1. Resume Personalization Setup Dashboard
+The new pre-interview workspace allows you to personalize questions by dropping your resume PDF directly. It features interactive drag-and-drop animations, progress logs, and a fallback route for generic interviews.
+
+<p align="center">
+  <img src="public/images/resume_setup_ui.png" width="700" alt="Resume Personalization Setup Screen" />
+</p>
+
+### 2. Personalized AI Interview Workspace
+Once analyzed, the workspace loads your custom questions into the checklist tracker. You can click on any question in the sidebar checklist to load the context and begin the interview session.
+
+<p align="center">
+  <img src="public/images/interview_chat_ui.png" width="700" alt="Personalized AI Interview Workspace" />
+</p>
 
 ---
 
@@ -27,12 +47,12 @@
 ```mermaid
 graph TD
     User([User Candidate]) -->|Interacts with UI| FE[Next.js Frontend]
-    FE -->|Renders Layout & Charts| Dashboard[Performance Dashboard]
-    FE -->|Submits Answer| BE[FastAPI Backend:8000]
+    FE -->|Uploads PDF Resume| BE[FastAPI Backend:8000]
     
     subgraph AI Engine
-        BE -->|Invokes with Schema Prompt| Gemini[Gemini 1.5 Flash API]
-        Gemini -->|Returns Evaluation JSON| BE
+        BE -->|Extracts text via PyMuPDF| Extraction[PDF Text Extractor]
+        Extraction -->|Prompts with Schema| Gemini[Gemini 1.5 Flash API]
+        Gemini -->|Returns Question Schema JSON| BE
     end
 
     subgraph Resilience Layer
@@ -40,6 +60,7 @@ graph TD
     end
 
     BE -->|HTTP 200 JSON| FE
+    FE -->|Renders Checklist & Questions| Chat[Active Chat Simulator]
 ```
 
 ---
@@ -49,7 +70,7 @@ graph TD
 | Layer | Technologies |
 |---|---|
 | **Frontend** | Next.js 16 (App Router), React 19, Tailwind CSS v4, Framer Motion, Lucide React, Canvas Confetti |
-| **Backend** | Python 3.10+, FastAPI, Uvicorn, Pydantic, Python-Requests |
+| **Backend** | Python 3.10+, FastAPI, Uvicorn, PyMuPDF (fitz), Pydantic, Python-Requests |
 | **AI Model** | Google Gemini 1.5 Flash (via API) |
 | **Deployment** | Vercel (Frontend), FastAPI Host (Backend) |
 
@@ -59,13 +80,18 @@ graph TD
 
 ```
 ├── backend/
-│   ├── main.py          # FastAPI Evaluation Engine
-│   └── .env.example     # Environment template (GEMINI_API_KEY)
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── resume_service.py # PDF Extraction & Gemini prompt builders
+│   ├── main.py              # FastAPI Evaluation & Upload endpoints
+│   └── .env.example         # Environment template (GEMINI_API_KEY)
+├── public/
+│   └── images/              # Assets for documentation
 ├── src/
-│   ├── app/             # Next.js App Router Pages (Interview, Roles, Analytics)
-│   ├── components/      # UI components (Navbar, GridBackground, BentoCards)
-│   ├── lib/             # API client handlers
-│   └── globals.css      # Core Design System & Tailwind v4 Custom Tokens
+│   ├── app/                 # Next.js App Router Pages (Interview, Roles, Analytics)
+│   ├── components/          # UI components (Navbar, GridBackground, BentoCards)
+│   ├── lib/                 # API client handlers
+│   └── globals.css          # Core Design System & Tailwind v4 Custom Tokens
 ├── package.json
 └── tsconfig.json
 ```
@@ -84,8 +110,8 @@ cd backend
 cp .env.example .env
 # Edit .env and paste your GEMINI_API_KEY
 
-# Install dependencies (FastAPI, Uvicorn, Requests)
-pip install fastapi uvicorn requests pydantic
+# Install dependencies (FastAPI, Uvicorn, PyMuPDF, Requests)
+pip install fastapi uvicorn requests pydantic pymupdf
 
 # Launch the FastAPI server
 python -m uvicorn main:app --port 8000 --reload

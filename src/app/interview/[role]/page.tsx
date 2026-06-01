@@ -18,10 +18,16 @@ import {
   CheckCircle,
   ArrowLeft,
   Settings,
-  Info
+  Info,
+  UploadCloud,
+  FileText,
+  Sparkles,
+  Check,
+  ArrowRight,
+  RefreshCw
 } from 'lucide-react';
 import GridBackground from '@/components/GridBackground';
-import { evaluateAnswer } from '@/lib/api';
+import { evaluateAnswer, uploadResume, ResumeAnalysisResponse } from '@/lib/api';
 
 interface Message {
   sender: 'ai' | 'user';
@@ -154,9 +160,16 @@ export default function InterviewPage() {
   const router = useRouter();
   const roleId = (params.role as string) || 'frontend';
 
-  const script = INTERVIEW_SCRIPTS[roleId] || DEFAULT_SCRIPT;
+  // Setup / Resume upload states
+  const [isSetupComplete, setIsSetupComplete] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'analyzing' | 'success' | 'error'>('idle');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [customQuestions, setCustomQuestions] = useState<string[]>([]);
+  const [analysisResult, setAnalysisResult] = useState<ResumeAnalysisResponse | null>(null);
+  const [dragActive, setDragActive] = useState(false);
 
-  // States
+  // Active Interview States
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeQuestion, setActiveQuestion] = useState<string>('');
   const [inputText, setInputText] = useState('');
@@ -168,26 +181,39 @@ export default function InterviewPage() {
   // Refs
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Initialize
+  // Derive active script based on custom resume questions or defaults
+  const currentScript = customQuestions.length > 0
+    ? customQuestions.map(q => ({
+        question: q,
+        sampleTranscriptions: [
+          "This is a personalized question based on my resume projects. I solved this by choosing suitable database schemas and standard optimizations.",
+          "Based on my experience, I resolved this by coordinating with developers, dividing tasks, and scheduling clear review checkpoints."
+        ]
+      }))
+    : (INTERVIEW_SCRIPTS[roleId] || DEFAULT_SCRIPT);
+
+  // Initialize Interview Chat once Setup is Complete
   useEffect(() => {
+    if (!isSetupComplete) return;
+
     // Start timer
     timerRef.current = setInterval(() => {
       setSecondsElapsed((prev) => prev + 1);
     }, 1000);
 
-    // Get a random question from the role's script
-    const roleScript = INTERVIEW_SCRIPTS[roleId] || DEFAULT_SCRIPT;
-    const randomQ = roleScript[Math.floor(Math.random() * roleScript.length)].question;
-    setActiveQuestion(randomQ);
+    // Get the first question from script
+    const firstQ = currentScript[0]?.question || "Welcome! Let's begin the interview.";
+    setActiveQuestion(firstQ);
 
-    // Initial message
+    // Initial AI message
     setIsThinking(true);
     const welcomeTimer = setTimeout(() => {
       setMessages([
         {
           sender: 'ai',
-          text: randomQ,
+          text: firstQ,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -198,7 +224,7 @@ export default function InterviewPage() {
       if (timerRef.current) clearInterval(timerRef.current);
       clearTimeout(welcomeTimer);
     };
-  }, [roleId]);
+  }, [isSetupComplete, customQuestions]);
 
   // Scroll to bottom
   useEffect(() => {
@@ -212,12 +238,95 @@ export default function InterviewPage() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Drag and Drop handlers
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    setUploadError(null);
+
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      if (file.type !== "application/pdf") {
+        setUploadError("Please upload a valid PDF resume.");
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      if (file.type !== "application/pdf") {
+        setUploadError("Please upload a valid PDF resume.");
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
+  // Call API to analyze resume
+  const handleAnalyzeResume = async () => {
+    if (!selectedFile) return;
+    setUploadError(null);
+    setUploadStatus('uploading');
+
+    try {
+      // Simulate progress indicator ticks
+      const progressTimer = setTimeout(() => {
+        setUploadStatus('analyzing');
+      }, 1500);
+
+      const response = await uploadResume(selectedFile, roleId);
+      clearTimeout(progressTimer);
+
+      setUploadStatus('success');
+      setAnalysisResult(response);
+      
+      // Combine 5 technical and 3 behavioral questions
+      const combinedQs = [...response.technical_questions, ...response.behavioral_questions];
+      setCustomQuestions(combinedQs);
+
+      // Save in localStorage for the feedback system or persistence
+      localStorage.setItem('mockmate-resume-analysis', JSON.stringify({
+        role: roleId,
+        analysis: response
+      }));
+
+      // Delay transition to chat so success animation can be seen
+      setTimeout(() => {
+        setIsSetupComplete(true);
+      }, 1500);
+
+    } catch (err: any) {
+      console.error(err);
+      setUploadStatus('error');
+      setUploadError(err.message || "Resume analysis failed. Try again.");
+    }
+  };
+
+  const handleSkipSetup = () => {
+    setCustomQuestions([]);
+    setIsSetupComplete(true);
+  };
+
   // Mock Voice Recording - Populates input with realistic text
   const handleVoiceToggle = () => {
     if (isVoiceRecording) {
       setIsVoiceRecording(false);
-      const roleScript = INTERVIEW_SCRIPTS[roleId] || DEFAULT_SCRIPT;
-      const questionObj = roleScript.find(q => q.question === activeQuestion) || roleScript[0];
+      const questionObj = currentScript.find(q => q.question === activeQuestion) || currentScript[0];
       const randomAns = questionObj.sampleTranscriptions[
         Math.floor(Math.random() * questionObj.sampleTranscriptions.length)
       ];
@@ -287,233 +396,505 @@ export default function InterviewPage() {
     <div className="relative min-h-screen flex flex-col">
       <GridBackground />
 
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        
-        {/* Left Sidebar */}
-        <div className="lg:col-span-4 flex flex-col gap-6">
-          {/* Back button and title */}
-          <div className="flex items-center gap-3">
-            <Link
-              href="/roles"
-              className="h-9 w-9 rounded-xl border border-white/5 bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
-            >
-              <ArrowLeft className="h-4.5 w-4.5" />
-            </Link>
-            <div>
-              <span className="text-[10px] text-primary font-bold uppercase tracking-wider">Live Simulator</span>
-              <h2 className="text-base font-bold text-white leading-tight">{getRoleTitle(roleId)}</h2>
-            </div>
-          </div>
-
-          {/* Status Panel */}
-          <div className="glass-panel rounded-3xl p-6 space-y-6">
-            {/* Timer */}
-            <div className="flex items-center justify-between border-b border-white/5 pb-4">
-              <span className="text-xs text-gray-400 font-semibold flex items-center gap-1.5">
-                <Clock className="h-4 w-4 text-primary" /> Elapsed Time
-              </span>
-              <span className="text-base font-mono font-bold text-white">{formatTime(secondsElapsed)}</span>
-            </div>
-
-            {/* Progress */}
-            <div className="space-y-3">
-              <div className="flex justify-between text-xs font-semibold text-gray-400">
-                <span>Questions Completed</span>
-                <span className="text-white">{messages.some(m => m.sender === 'user') ? 1 : 0} of 1</span>
-              </div>
-              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-gradient-to-r from-primary to-accent"
-                  initial={{ width: 0 }}
-                  animate={{ width: messages.some(m => m.sender === 'user') ? '100%' : '50%' }}
-                  transition={{ duration: 0.4 }}
-                />
-              </div>
-            </div>
-
-            {/* Question Checklist */}
-            <div className="space-y-2.5">
-              <div
-                className={`flex items-start gap-2.5 p-2 rounded-xl border transition-colors ${
-                  messages.some(m => m.sender === 'user')
-                    ? 'border-emerald-500/10 bg-emerald-500/5 text-emerald-400'
-                    : 'border-primary/20 bg-primary-glow/5 text-primary'
-                }`}
-              >
-                {messages.some(m => m.sender === 'user') ? (
-                  <CheckCircle className="h-4 w-4 shrink-0 mt-0.5 text-emerald-500" />
-                ) : (
-                  <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin shrink-0 mt-0.5" />
-                )}
-                <span className="text-xs font-semibold truncate max-w-[240px]">
-                  Q1: {activeQuestion || "Loading question..."}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Tips Card */}
-          <div className="glass-panel rounded-3xl p-6 bg-gradient-to-br from-violet-950/20 via-indigo-950/10 to-transparent border-violet-500/10 space-y-3">
-            <h3 className="text-xs font-bold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Info className="h-3.5 w-3.5" /> Interviewer Tips
-            </h3>
-            <p className="text-xs text-gray-400 leading-relaxed font-medium">
-              Structure technical answers using the <strong className="text-gray-300">STAR Method</strong> (Situation, Task, Action, Result) or discuss performance trade-offs directly to score higher.
-            </p>
-          </div>
-        </div>
-
-        {/* Main Chat Interface */}
-        <div className="lg:col-span-8 flex flex-col justify-between glass-panel rounded-3xl overflow-hidden border border-white/5">
-          {/* Chat Header */}
-          <div className="bg-white/3 border-b border-white/5 px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-              <div>
-                <span className="text-xs font-bold text-gray-200">AI Interviewer — Active</span>
-                <p className="text-[10px] text-gray-500 font-medium">Evaluating response clarity</p>
-              </div>
-            </div>
-            <button
-              onClick={handleEndInterview}
-              className="text-xs font-bold border border-red-500/20 bg-red-500/10 text-red-400 px-3.5 py-1.5 rounded-xl hover:bg-red-500 hover:text-white transition-all active:scale-[0.98]"
-            >
-              End Interview
-            </button>
-          </div>
-
-          {/* Chat Bubble Stream */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 max-h-[500px]">
-            <AnimatePresence mode="popLayout">
-              {messages.map((msg, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0, y: 15 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -15 }}
-                  transition={{ duration: 0.3 }}
-                  className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div
-                    className={`max-w-[80%] rounded-2xl p-4.5 text-sm font-medium leading-relaxed relative ${
-                      msg.sender === 'user'
-                        ? 'bg-gradient-to-r from-primary to-accent text-white rounded-br-none shadow-[0_5px_15px_rgba(139,92,246,0.15)]'
-                        : 'bg-white/5 border border-white/5 text-gray-300 rounded-bl-none'
-                    }`}
-                  >
-                    <p>{msg.text}</p>
-                    <span className="absolute bottom-1 right-3.5 text-[8px] text-white/40 font-mono">
-                      {msg.timestamp}
-                    </span>
+      <AnimatePresence mode="wait">
+        {!isSetupComplete ? (
+          <motion.div
+            key="setup-screen"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -15 }}
+            transition={{ duration: 0.4 }}
+            className="flex-grow flex items-center justify-center p-4 md:p-6"
+          >
+            <div className="max-w-5xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch pt-6 pb-12">
+              
+              {/* Left Column: Dropzone */}
+              <div className="lg:col-span-7 flex flex-col justify-between glass-panel rounded-3xl p-6 md:p-8 space-y-6">
+                
+                {/* Header */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href="/roles"
+                      className="h-8 w-8 rounded-lg border border-white/5 bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </Link>
+                    <span className="text-[10px] text-primary font-bold uppercase tracking-wider">Configure Track</span>
                   </div>
-                </motion.div>
-              ))}
+                  <h1 className="text-2xl md:text-3xl font-extrabold text-white">
+                    Personalize with your Resume
+                  </h1>
+                  <p className="text-xs text-gray-400 font-medium">
+                    Upload your resume to let MockMate AI generate custom interview scenarios based on your projects, background, and tech stack.
+                  </p>
+                </div>
 
-              {/* AI Thinking Animation */}
-              {isThinking && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="flex justify-start"
+                {/* Dropzone area */}
+                <div
+                  onDragEnter={handleDrag}
+                  onDragOver={handleDrag}
+                  onDragLeave={handleDrag}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-300 flex flex-col items-center justify-center space-y-4 relative overflow-hidden ${
+                    dragActive
+                      ? 'border-primary bg-primary-glow/10 shadow-[0_0_25px_rgba(139,92,246,0.15)] scale-[1.01]'
+                      : 'border-white/10 bg-white/2 hover:border-white/20 hover:bg-white/5'
+                  } ${uploadStatus !== 'idle' && uploadStatus !== 'error' ? 'pointer-events-none' : ''}`}
                 >
-                  <div className="bg-white/5 border border-white/5 text-gray-400 rounded-2xl rounded-bl-none p-4 flex items-center gap-3">
-                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                    <span className="text-xs font-semibold tracking-wide">Analyzing your response...</span>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <div ref={chatEndRef} />
-          </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept=".pdf"
+                    className="hidden"
+                  />
+                  
+                  {uploadStatus === 'idle' || uploadStatus === 'error' ? (
+                    <>
+                      <div className="h-14 w-14 rounded-full bg-white/5 border border-white/5 flex items-center justify-center text-gray-400 shadow-inner">
+                        <UploadCloud className="h-7 w-7" />
+                      </div>
+                      <div>
+                        {selectedFile ? (
+                          <div className="space-y-1">
+                            <p className="text-sm font-bold text-white flex items-center justify-center gap-1.5">
+                              <FileText className="h-4 w-4 text-primary" /> {selectedFile.name}
+                            </p>
+                            <p className="text-[10px] text-gray-500">
+                              {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <p className="text-sm font-bold text-gray-200">
+                              Drag & Drop your resume here, or <span className="text-primary hover:underline">browse</span>
+                            </p>
+                            <p className="text-[10px] text-gray-500">Supports PDF only (Max 5MB)</p>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="space-y-4 w-full max-w-xs py-4">
+                      <div className="h-10 w-10 border-3 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+                      <div className="space-y-1.5">
+                        <p className="text-sm font-bold text-white uppercase tracking-wider animate-pulse">
+                          {uploadStatus === 'uploading' ? 'Uploading PDF...' : 'AI Analyzing Profile...'}
+                        </p>
+                        <div className="text-[10px] text-gray-400 space-y-1">
+                          <p className="flex items-center justify-center gap-1">
+                            {uploadStatus === 'analyzing' ? <Check className="h-3 w-3 text-emerald-400" /> : <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                            Extracting PDF document structure
+                          </p>
+                          <p className="flex items-center justify-center gap-1">
+                            {uploadStatus === 'analyzing' ? <Loader2 className="h-3 w-3 animate-spin text-primary" /> : <div className="h-1.5 w-1.5 rounded-full bg-gray-500" />}
+                            Analyzing skills and experience tags via Gemini
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-          {/* Input Panel */}
-          <div className="border-t border-white/5 p-4.5 bg-white/2">
-            {/* Error Message */}
-            <AnimatePresence>
-              {error && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="mb-4 p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs font-semibold flex items-center gap-2"
-                >
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{error}</span>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Listening state wave visualizer */}
-            <AnimatePresence>
-              {isVoiceRecording && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 50 }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="flex items-center justify-center gap-1.5 mb-4 overflow-hidden"
-                >
-                  {[...Array(9)].map((_, i) => (
+                  {/* Glass overlay on success */}
+                  {uploadStatus === 'success' && (
                     <motion.div
-                      key={i}
-                      className="w-1 rounded-full bg-primary"
-                      animate={{
-                        height: [12, 38, 12],
-                      }}
-                      transition={{
-                        duration: 1,
-                        repeat: Infinity,
-                        ease: 'easeInOut',
-                        delay: i * 0.1,
-                      }}
-                    />
-                  ))}
-                  <span className="text-xs text-primary font-bold ml-3 animate-pulse">
-                    Listening... Speak your answer now. Click mic again to finish.
-                  </span>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="absolute inset-0 bg-bg-dark/95 backdrop-blur-sm flex flex-col items-center justify-center space-y-3"
+                    >
+                      <div className="h-12 w-12 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.3)] animate-bounce">
+                        <Check className="h-6 w-6" />
+                      </div>
+                      <div className="text-center">
+                        <h3 className="text-sm font-bold text-white">Analysis Complete!</h3>
+                        <p className="text-[10px] text-gray-500">8 personalized questions generated.</p>
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
 
-            <div className="flex gap-3">
-              {/* Mic toggle */}
-              <button
-                onClick={handleVoiceToggle}
-                disabled={isThinking}
-                className={`h-12 w-12 rounded-xl flex items-center justify-center border transition-all ${
-                  isVoiceRecording
-                    ? 'bg-red-500 border-red-600 text-white animate-pulse'
-                    : 'bg-white/5 border-white/5 text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-40'
-                }`}
-              >
-                {isVoiceRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-              </button>
+                {/* Error Banner */}
+                {uploadError && (
+                  <div className="p-3.5 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs font-semibold flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{uploadError}</span>
+                  </div>
+                )}
 
-              {/* Text input */}
-              <input
-                type="text"
-                placeholder={isThinking ? "Analyzing your response..." : isVoiceRecording ? "Speaking... speak clearly" : "Type your answer here..."}
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                disabled={isVoiceRecording || isThinking}
-                className="flex-1 bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
-              />
+                {/* Bottom Actions */}
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <button
+                    onClick={handleAnalyzeResume}
+                    disabled={!selectedFile || uploadStatus !== 'idle'}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary to-accent py-4 text-sm font-bold text-white shadow-lg transition-transform active:scale-98 disabled:opacity-40 disabled:scale-100 disabled:shadow-none"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Analyze Resume
+                  </button>
+                  <button
+                    onClick={handleSkipSetup}
+                    disabled={uploadStatus !== 'idle' && uploadStatus !== 'error'}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-2xl border border-white/10 bg-white/5 px-6 py-4 text-xs font-semibold text-white hover:bg-white/10 disabled:opacity-40"
+                  >
+                    Skip & Use Defaults
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
 
-              {/* Send Button */}
-              <button
-                onClick={handleSendMessage}
-                disabled={!inputText.trim() || isVoiceRecording || isThinking}
-                className="h-12 w-12 rounded-xl bg-gradient-to-r from-primary to-accent text-white flex items-center justify-center shadow-lg transition-transform active:scale-95 disabled:opacity-40 disabled:scale-100 disabled:shadow-none"
-              >
-                <Send className="h-4.5 w-4.5" />
-              </button>
+              </div>
+
+              {/* Right Column: Information panel */}
+              <div className="lg:col-span-5 flex flex-col justify-between glass-panel rounded-3xl p-6.5 bg-gradient-to-br from-violet-950/20 via-indigo-950/10 to-transparent border-violet-500/10 space-y-6">
+                
+                {/* Features List */}
+                <div className="space-y-6">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-white/5 pb-3">
+                    <Brain className="h-4.5 w-4.5 text-primary animate-pulse" />
+                    AI Personalization Engine
+                  </h3>
+
+                  <div className="space-y-4">
+                    <div className="flex gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center text-primary shrink-0 mt-0.5">
+                        <Sparkles className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-200 leading-tight">Tailored Tech Stack</h4>
+                        <p className="text-[10px] text-gray-400 mt-1 leading-normal">
+                          Gemini extracts tools and frameworks listed in your projects to formulate specific syntax and architectural questions.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 shrink-0 mt-0.5">
+                        <Settings className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-200 leading-tight">Seniority Calibration</h4>
+                        <p className="text-[10px] text-gray-400 mt-1 leading-normal">
+                          Adjusts the depth and technical complexity of the questions according to your detected years of experience.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <div className="h-8 w-8 rounded-lg bg-fuchsia-500/20 border border-fuchsia-500/30 flex items-center justify-center text-fuchsia-400 shrink-0 mt-0.5">
+                        <FileText className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-200 leading-tight">Project-Based Drilling</h4>
+                        <p className="text-[10px] text-gray-400 mt-1 leading-normal">
+                          Generates behavioral questions directly tied to projects listed on your resume, challenging your decision-making boundary.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Default Script Preview */}
+                <div className="rounded-2xl bg-white/3 border border-white/5 p-4.5 space-y-2.5">
+                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">
+                    Or select default {getRoleTitle(roleId)} track:
+                  </div>
+                  <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
+                    Skip setup to practice generic developer track (5 standardized questions covering hydration, state, rendering, and performance caching rubrics).
+                  </p>
+                </div>
+
+              </div>
+
             </div>
-          </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="interview-screen"
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
+            className="flex-grow flex flex-col"
+          >
+            <div className="flex-grow max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+              
+              {/* Left Sidebar */}
+              <div className="lg:col-span-4 flex flex-col gap-6">
+                
+                {/* Back button and title */}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => {
+                      if (window.confirm("Return to setup page? This will reset the active chat.")) {
+                        setIsSetupComplete(false);
+                        setMessages([]);
+                        setSelectedFile(null);
+                        setUploadStatus('idle');
+                      }
+                    }}
+                    className="h-9 w-9 rounded-xl border border-white/5 bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+                  >
+                    <ArrowLeft className="h-4.5 w-4.5" />
+                  </button>
+                  <div>
+                    <span className="text-[10px] text-primary font-bold uppercase tracking-wider">
+                      {analysisResult ? `Seniority: ${analysisResult.experience_level}` : 'Live Simulator'}
+                    </span>
+                    <h2 className="text-base font-bold text-white leading-tight">{getRoleTitle(roleId)}</h2>
+                  </div>
+                </div>
 
-        </div>
+                {/* Status Panel */}
+                <div className="glass-panel rounded-3xl p-6 space-y-6">
+                  {/* Timer */}
+                  <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                    <span className="text-xs text-gray-400 font-semibold flex items-center gap-1.5">
+                      <Clock className="h-4 w-4 text-primary" /> Elapsed Time
+                    </span>
+                    <span className="text-base font-mono font-bold text-white">{formatTime(secondsElapsed)}</span>
+                  </div>
 
-      </div>
+                  {/* Progress */}
+                  <div className="space-y-3">
+                    <div className="flex justify-between text-xs font-semibold text-gray-400">
+                      <span>Questions Completed</span>
+                      <span className="text-white">{messages.some(m => m.sender === 'user') ? 1 : 0} of 1</span>
+                    </div>
+                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-primary to-accent"
+                        initial={{ width: 0 }}
+                        animate={{ width: messages.some(m => m.sender === 'user') ? '100%' : '50%' }}
+                        transition={{ duration: 0.4 }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Question Checklist */}
+                  <div className="space-y-3">
+                    <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider flex items-center justify-between">
+                      <span>Interview Checklist</span>
+                      <span className="text-primary">{currentScript.length} total</span>
+                    </div>
+                    
+                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                      {currentScript.map((scriptItem, idx) => {
+                        const isCurrent = scriptItem.question === activeQuestion;
+                        return (
+                          <button
+                            key={idx}
+                            disabled={isThinking}
+                            onClick={() => {
+                              setActiveQuestion(scriptItem.question);
+                              setMessages([
+                                {
+                                  sender: 'ai',
+                                  text: scriptItem.question,
+                                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                }
+                              ]);
+                            }}
+                            className={`w-full text-left flex items-start gap-2 p-2 rounded-xl border transition-all text-[11px] font-semibold ${
+                              isCurrent
+                                ? 'border-primary/30 bg-primary-glow/10 text-primary shadow-[0_0_10px_rgba(139,92,246,0.15)]'
+                                : 'border-white/5 bg-white/2 text-gray-400 hover:border-white/10 hover:text-gray-300 disabled:opacity-50'
+                            }`}
+                          >
+                            <span className="shrink-0 mr-1.5 text-gray-500 font-mono">Q{idx + 1}:</span>
+                            <span className="truncate flex-1">{scriptItem.question}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Resume Summary Card */}
+                {analysisResult && (
+                  <div className="glass-panel rounded-3xl p-6 bg-gradient-to-br from-violet-950/20 via-indigo-950/10 to-transparent border-violet-500/10 space-y-3">
+                    <h3 className="text-xs font-bold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5" /> AI Candidate Profile
+                    </h3>
+                    <p className="text-[11px] text-gray-300 leading-relaxed font-semibold italic">
+                      &ldquo;{analysisResult.summary}&rdquo;
+                    </p>
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      {analysisResult.skills.slice(0, 5).map((skill) => (
+                        <span key={skill} className="text-[9px] font-mono bg-white/5 border border-white/5 text-gray-400 px-1.5 py-0.5 rounded">
+                          #{skill}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tips Card */}
+                <div className="glass-panel rounded-3xl p-6 bg-gradient-to-br from-violet-950/20 via-indigo-950/10 to-transparent border-violet-500/10 space-y-3">
+                  <h3 className="text-xs font-bold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Info className="h-3.5 w-3.5" /> Interviewer Tips
+                  </h3>
+                  <p className="text-xs text-gray-400 leading-relaxed font-medium">
+                    Structure technical answers using the <strong className="text-gray-300">STAR Method</strong> (Situation, Task, Action, Result) or discuss performance trade-offs directly to score higher.
+                  </p>
+                </div>
+              </div>
+
+              {/* Main Chat Interface */}
+              <div className="lg:col-span-8 flex flex-col justify-between glass-panel rounded-3xl overflow-hidden border border-white/5">
+                
+                {/* Chat Header */}
+                <div className="bg-white/3 border-b border-white/5 px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <div>
+                      <span className="text-xs font-bold text-gray-200">AI Interviewer — Active</span>
+                      <p className="text-[10px] text-gray-500 font-medium">Evaluating response clarity</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleEndInterview}
+                    className="text-xs font-bold border border-red-500/20 bg-red-500/10 text-red-400 px-3.5 py-1.5 rounded-xl hover:bg-red-500 hover:text-white transition-all active:scale-[0.98]"
+                  >
+                    End Interview
+                  </button>
+                </div>
+
+                {/* Chat Bubble Stream */}
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 max-h-[500px]">
+                  <AnimatePresence mode="popLayout">
+                    {messages.map((msg, i) => (
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, y: 15 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -15 }}
+                        transition={{ duration: 0.3 }}
+                        className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[80%] rounded-2xl p-4.5 text-sm font-medium leading-relaxed relative ${
+                            msg.sender === 'user'
+                              ? 'bg-gradient-to-r from-primary to-accent text-white rounded-br-none shadow-[0_5px_15px_rgba(139,92,246,0.15)]'
+                              : 'bg-white/5 border border-white/5 text-gray-300 rounded-bl-none'
+                          }`}
+                        >
+                          <p>{msg.text}</p>
+                          <span className="absolute bottom-1 right-3.5 text-[8px] text-white/40 font-mono">
+                            {msg.timestamp}
+                          </span>
+                        </div>
+                      </motion.div>
+                    ))}
+
+                    {/* AI Thinking Animation */}
+                    {isThinking && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0 }}
+                        className="flex justify-start"
+                      >
+                        <div className="bg-white/5 border border-white/5 text-gray-400 rounded-2xl rounded-bl-none p-4 flex items-center gap-3">
+                          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                          <span className="text-xs font-semibold tracking-wide">Analyzing your response...</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Input Panel */}
+                <div className="border-t border-white/5 p-4.5 bg-white/2">
+                  {/* Error Message */}
+                  <AnimatePresence>
+                    {error && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mb-4 p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-400 text-xs font-semibold flex items-center gap-2"
+                      >
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        <span>{error}</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Listening state wave visualizer */}
+                  <AnimatePresence>
+                    {isVoiceRecording && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 50 }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="flex items-center justify-center gap-1.5 mb-4 overflow-hidden"
+                      >
+                        {[...Array(9)].map((_, i) => (
+                          <motion.div
+                            key={i}
+                            className="w-1 rounded-full bg-primary"
+                            animate={{
+                              height: [12, 38, 12],
+                            }}
+                            transition={{
+                              duration: 1,
+                              repeat: Infinity,
+                              ease: 'easeInOut',
+                              delay: i * 0.1,
+                            }}
+                          />
+                        ))}
+                        <span className="text-xs text-primary font-bold ml-3 animate-pulse">
+                          Listening... Speak your answer now. Click mic again to finish.
+                        </span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="flex gap-3">
+                    {/* Mic toggle */}
+                    <button
+                      onClick={handleVoiceToggle}
+                      disabled={isThinking}
+                      className={`h-12 w-12 rounded-xl flex items-center justify-center border transition-all ${
+                        isVoiceRecording
+                          ? 'bg-red-500 border-red-600 text-white animate-pulse'
+                          : 'bg-white/5 border-white/5 text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-40'
+                      }`}
+                    >
+                      {isVoiceRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                    </button>
+
+                    {/* Text input */}
+                    <input
+                      type="text"
+                      placeholder={isThinking ? "Analyzing your response..." : isVoiceRecording ? "Speaking... speak clearly" : "Type your answer here..."}
+                      value={inputText}
+                      onChange={(e) => setInputText(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                      disabled={isVoiceRecording || isThinking}
+                      className="flex-1 bg-white/5 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-primary/50 transition-colors disabled:opacity-50"
+                    />
+
+                    {/* Send Button */}
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={!inputText.trim() || isVoiceRecording || isThinking}
+                      className="h-12 w-12 rounded-xl bg-gradient-to-r from-primary to-accent text-white flex items-center justify-center shadow-lg transition-transform active:scale-95 disabled:opacity-40 disabled:scale-100 disabled:shadow-none"
+                    >
+                      <Send className="h-4.5 w-4.5" />
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

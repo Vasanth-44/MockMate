@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
 import json
 import logging
+from services.resume_service import extract_text_from_pdf, generate_personalized_questions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,9 +48,35 @@ class EvaluationResponse(BaseModel):
     improvements: list[str]
     summary: str
 
+class ResumeResponse(BaseModel):
+    skills: list[str]
+    experience_level: str
+    technical_questions: list[str]
+    behavioral_questions: list[str]
+    summary: str
+
 @app.get("/")
 def home():
     return {"message": "MockMate AI Evaluation Backend running"}
+
+@app.post("/api/upload-resume", response_model=ResumeResponse)
+async def upload_resume(resume: UploadFile = File(...), role: str = Form(...)):
+    logger.info(f"Received resume upload request for role: {role}, file: {resume.filename}")
+    
+    if not resume.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF resumes are supported. Please upload a valid PDF resume.")
+    
+    try:
+        pdf_bytes = await resume.read()
+        resume_text = extract_text_from_pdf(pdf_bytes)
+        result = generate_personalized_questions(resume_text, role)
+        return result
+    except ValueError as ve:
+        logger.error(f"Value error processing resume: {str(ve)}")
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Internal error processing resume: {str(e)}")
+        raise HTTPException(status_code=500, detail="Resume analysis failed. Try again.")
 
 @app.post("/api/evaluate", response_model=EvaluationResponse)
 def evaluate_response(req: EvaluationRequest):
